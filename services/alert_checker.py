@@ -5,7 +5,7 @@ from typing import Dict, List, Any
 from datetime import datetime
 
 from models.database import AlertEvent, init_db, is_new_event, save_event, mark_event_notified
-from services.scraper import InovarScraper
+from services.scraper_lightweight import InovarScraperLightweight
 from services.email_notifier import EmailNotifier
 from utils.config import get_config
 
@@ -85,9 +85,9 @@ class AlertChecker:
         return result
 
     def _scrape_portal(self) -> Dict[str, Any]:
-        """Scrape the Inovar portal."""
+        """Scrape the Inovar portal using lightweight API-based approach."""
         try:
-            with InovarScraper(
+            with InovarScraperLightweight(
                 username=self.config.inovar_username,
                 password=self.config.inovar_password,
                 login_url=self.config.inovar_login_url,

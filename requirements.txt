@@ -1,12 +1,7 @@
 # Azure Functions
 azure-functions>=1.18.0
 
-# Web scraping
-playwright>=1.40.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
-
-# HTTP requests
+# HTTP requests (lightweight API scraping - no browser needed!)
 requests>=2.31.0
 
 # Database
