@@ -1,0 +1,21 @@
+# Azure Functions
+azure-functions>=1.18.0
+
+# Web scraping
+playwright>=1.40.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# HTTP requests
+requests>=2.31.0
+
+# Database
+sqlmodel>=0.0.14
+sqlalchemy>=2.0.0
+
+# Email
+aiosmtplib>=3.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+pytz>=2023.3
