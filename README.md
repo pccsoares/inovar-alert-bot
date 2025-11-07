@@ -1,4 +1,4 @@
-# Inovar +AZ School Alerts
+# Inovar Mais School Alerts
 
 Azure Function (Python) that monitors a student's Inovar +AZ portal for new absences (Faltas) and behavior/teacher alerts (Avisos), sending email notifications when new events are detected.
 
