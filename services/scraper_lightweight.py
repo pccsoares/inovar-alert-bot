@@ -3,6 +3,9 @@ import json
 import logging
 import base64
 import uuid
+import hmac
+import hashlib
+import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -10,13 +13,21 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Import proxy support
+try:
+    from utils.webshare import Webshare
+    PROXY_AVAILABLE = True
+except ImportError:
+    PROXY_AVAILABLE = False
+    logger.warning("Webshare proxy module not available")
+
 
 class InovarScraperLightweight:
     """Lightweight scraper for Inovar +AZ portal using direct API calls."""
 
     BASE_URL = "https://aevf.inovarmais.com/consulta"
 
-    def __init__(self, username: str, password: str, login_url: str = None, home_url: str = None):
+    def __init__(self, username: str, password: str, login_url: str = None, home_url: str = None, use_proxy: bool = None):
         """
         Initialize the lightweight scraper.
 
@@ -25,6 +36,7 @@ class InovarScraperLightweight:
             password: Password
             login_url: Not used (kept for compatibility)
             home_url: Not used (kept for compatibility)
+            use_proxy: Whether to use Webshare proxy. If None, auto-detects (uses proxy in Azure, not locally)
         """
         self.username = username
         self.password = password
@@ -33,20 +45,30 @@ class InovarScraperLightweight:
         self.aluno_id: Optional[int] = None
         self.matricula_id: Optional[int] = None
         self.tipo_ensino: int = 1  # Default: Regular teaching (1)
+        self.proxy_manager: Optional[Webshare] = None
+
+        # Auto-detect if we should use proxy (check if running in Azure)
+        if use_proxy is None:
+            use_proxy = os.getenv('WEBSITE_INSTANCE_ID') is not None  # Azure Function App indicator
+
+        # Initialize proxy if needed
+        if use_proxy and PROXY_AVAILABLE:
+            try:
+                logger.info("Initializing Webshare proxy...")
+                self.proxy_manager = Webshare()
+                proxy_dict = self.proxy_manager.get_proxy_dict()
+                self.session.proxies.update(proxy_dict)
+                logger.info(f"Proxy configured: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize proxy: {e}. Continuing without proxy.")
+                self.proxy_manager = None
 
         # Set common headers to mimic real browser
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Content-Type': 'application/json;charset=UTF-8',
-            'Referer': f'{self.BASE_URL}/app/index.html',
-            'sec-ch-ua': '"Not=A?Brand";v="24", "Chromium";v="140"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'Origin': f'{self.BASE_URL}',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Dest': 'empty'
+            'Referer': f'{self.BASE_URL}/app/index.html'
         })
 
     def __enter__(self):
@@ -68,6 +90,31 @@ class InovarScraperLightweight:
     def _encode_base64(self, text: str) -> str:
         """Encode text to base64."""
         return base64.b64encode(text.encode('utf-8')).decode('utf-8')
+
+    def _generate_festmani_token(self) -> str:
+        """
+        Generate x-festmani security token.
+
+        This token is a daily HMAC-SHA256 hash of the current UTC date.
+        JavaScript equivalent: TK() function in app.js
+        """
+        # Get current UTC date in YYYYMMDD format
+        utc_date = datetime.utcnow().strftime("%Y%m%d")
+
+        # Secret key (hardcoded in the portal's JavaScript)
+        secret_key = "0c24b08e-d78b-4d53-96a6-68db2bf2611f"
+
+        # Create HMAC-SHA256
+        hmac_digest = hmac.new(
+            secret_key.encode('utf-8'),
+            utc_date.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+
+        # Base64 encode
+        token = base64.b64encode(hmac_digest).decode('utf-8')
+
+        return token
 
     def login(self) -> bool:
         """
@@ -101,15 +148,16 @@ class InovarScraperLightweight:
 
             headers = {
                 'Authorization': f'Basic {basic_auth}',
-                # Note: x-festmani appears to be a security token
-                # Using a captured value - may need to be dynamically generated in future
-                'x-festmani': 'BOEVWPDJeXR53H99PvF/X7noUsWl4ajpSDiNAk6QeYU='
+                # x-festmani: Daily HMAC-SHA256 token (dynamically generated)
+                'x-festmani': self._generate_festmani_token()
             }
 
             response = self.session.post(url, json=payload, headers=headers, timeout=30)
 
             if response.status_code != 200:
-                logger.error(f"Login failed with status {response.status_code}: {response.text}")
+                logger.error(f"Login failed with status {response.status_code}")
+                logger.error(f"Response headers: {dict(response.headers)}")
+                logger.error(f"Response text (first 500 chars): {response.text[:500]}")
                 return False
 
             # Parse response

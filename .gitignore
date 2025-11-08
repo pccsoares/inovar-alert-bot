@@ -69,3 +69,4 @@ debug_screenshots/
 # Docker
 .dockerignore
 .claude/settings.local.json
+deploy.zip

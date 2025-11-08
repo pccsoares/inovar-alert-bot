@@ -1,18 +1,18 @@
 """
-Test script to verify scraper functionality.
+Test script to verify lightweight scraper functionality.
 
-This script tests the Inovar portal scraper without Azure Functions.
+This script tests the Inovar portal lightweight scraper without Azure Functions.
 It loads configuration from local.settings.json and performs a full scrape.
 
 Usage:
     1. Ensure local.settings.json exists with valid credentials
     2. Install dependencies: pip install -r requirements.txt
-    3. Install Playwright: playwright install chromium
-    4. Run: python test_scraper.py
+    3. Run: python test_scraper.py
 """
 import os
 import json
 import sys
+import logging
 from pathlib import Path
 
 # Fix Windows encoding issues
@@ -24,7 +24,13 @@ if sys.platform == 'win32':
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from services.scraper import InovarScraper
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+from services.scraper_lightweight import InovarScraperLightweight
 
 
 def load_config_from_file():
@@ -74,15 +80,16 @@ def main():
     print()
 
     # Run scraper
-    print("🌐 Starting browser and scraper...")
+    print("🌐 Starting lightweight scraper (no browser needed)...")
     print("-" * 70)
 
     try:
-        with InovarScraper(
+        with InovarScraperLightweight(
             username=username,
             password=password,
             login_url=login_url,
-            home_url=home_url
+            home_url=home_url,
+            use_proxy=False  # No proxy needed for local testing
         ) as scraper:
             print("🔐 Attempting login...")
             results = scraper.scrape_all()
@@ -104,12 +111,11 @@ def main():
                     print("-" * 70)
                     for i, absence in enumerate(absences, 1):
                         print(f"\n  [{i}] Absence:")
-                        print(f"      Date: {absence.get('date', 'N/A')}")
-                        print(f"      Description: {absence.get('description', 'N/A')}")
+                        print(f"      Date: {absence.get('date', 'N/A')} ({absence.get('day_of_week', 'N/A')})")
+                        print(f"      Time: {absence.get('time', 'N/A')}")
                         print(f"      Subject: {absence.get('subject', 'N/A')}")
-                        print(f"      Period: {absence.get('period', 'N/A')}")
-                        if absence.get('raw'):
-                            print(f"      Raw data: {json.dumps(absence['raw'], indent=8)}")
+                        print(f"      Type: {absence.get('absence_type', 'N/A')}")
+                        print(f"      Description: {absence.get('description', 'N/A')}")
                 else:
                     print("   No absences found.")
                 print()
@@ -121,16 +127,20 @@ def main():
                     print("-" * 70)
                     for i, alert in enumerate(alerts, 1):
                         print(f"\n  [{i}] Alert:")
-                        print(f"      Date: {alert.get('date', 'N/A')}")
+                        print(f"      Date: {alert.get('date', 'N/A')} ({alert.get('time', 'N/A')})")
+                        print(f"      Professor: {alert.get('professor', 'N/A')}")
+                        print(f"      Grau: {alert.get('grau', 'N/A')}")
                         print(f"      Description: {alert.get('description', 'N/A')}")
                 else:
                     print("   No behavior alerts found.")
                 print()
 
-                # Student ID (if available)
-                if scraper.student_id:
-                    print(f"🆔 Student ID extracted: {scraper.student_id}")
-                    print()
+                # Student info (if available)
+                if scraper.aluno_id:
+                    print(f"🆔 Aluno ID: {scraper.aluno_id}")
+                if scraper.matricula_id:
+                    print(f"🆔 Matricula ID: {scraper.matricula_id}")
+                print()
 
             else:
                 print("❌ Status: FAILED")

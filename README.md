@@ -1,16 +1,50 @@
-# Inovar +AZ School Alerts
+# Inovar Guardian Bot
 
-Azure Function (Python) that monitors a student's Inovar +AZ portal for new absences (Faltas) and behavior/teacher alerts (Avisos), sending email notifications when new events are detected.
+A lightweight automation tool that helps parents stay informed about their children's school activity on **Inovar Consulta**, the platform used by many Portuguese schools.
 
-## Features
+Since Inovar doesn't send timely alerts for new notes or absences, this bot checks daily for updates and sends notifications automatically.
 
-- **Automated Monitoring**: Timer-triggered function runs daily at 14:00 UTC
-- **Lightweight API Scraping**: Direct API calls (no browser/Chromium needed!)
-- **Fast & Efficient**: 10x faster than browser automation, minimal resource usage
-- **Smart Detection**: SQLite database tracks seen events to avoid duplicate notifications
-- **Dual Triggers**: Timer (daily) + HTTP endpoint (on-demand testing)
-- **Email Alerts**: AWS SES SMTP integration with HTML email templates
-- **Minimal Container**: Tiny Docker image (~100-200MB vs ~1-2GB with Chromium)
+## 🚀 Features
+
+🔔 **Daily Notifications** — Get alerted when your child:
+- Has a new absence (Falta)
+- Receives a behavior note from a teacher (Aviso de Comportamento)
+- Gets marked late (Pontualidade)
+- Is missing materials (Material)
+
+📧 **Email alerts** sent automatically
+⚡ **Lightweight** - runs without browser automation
+🔒 **Secure** - your credentials stay private
+🎯 **Smart detection** - no duplicate notifications
+
+## 💡 Why This Exists
+
+Inovar Consulta is useful but lacks proactive notifications.
+As a parent, it's easy to miss when a teacher leaves a note or a class is skipped.
+This bot solves that problem — acting as a digital assistant that monitors your child's progress and keeps you informed without daily manual checks.
+
+## 🧩 How It Works
+
+1. The bot logs into Inovar Consulta
+2. It retrieves student data via direct API calls (absences, behavior notes, etc.)
+3. It compares today's data with the previous check
+4. If something new appears (e.g., a missed class or a teacher note), it sends an email alert
+5. Runs automatically every day at 14:00 UTC (3pm Lisbon time)
+
+## 🛠️ Tech Stack
+
+- **Python 3.11** - Lightweight scripting
+- **Azure Functions** - Serverless automation (runs daily)
+- **Direct API Calls** - No browser needed (fast & efficient)
+- **Webshare Proxy** - Bypasses Cloudflare protection
+- **SQLite** - Tracks seen events (no duplicate notifications)
+- **SMTP Email** - AWS SES for notifications
+
+---
+
+## 📚 Technical Documentation
+
+*The sections below are for developers/technical users setting up the bot.*
 
 ## Architecture
 
@@ -159,6 +193,7 @@ All configuration can be set via environment variables or `local.settings.json`:
 | `INOVAR_PASSWORD` | Portal login password | Yes | - |
 | `INOVAR_LOGIN_URL` | Login page URL | No | `https://aevf.inovarmais.com/consulta/app/index.html#/login` |
 | `INOVAR_HOME_URL` | Home page URL | No | `https://aevf.inovarmais.com/consulta/app/index.html#/home` |
+| `WEBSHARE_API_KEY` | Webshare proxy API key | Yes (Azure only) | - |
 | `SMTP_HOST` | SMTP server hostname | Yes | - |
 | `SMTP_PORT` | SMTP port | No | `587` |
 | `SMTP_USER` | SMTP username/access key | Yes | - |
@@ -188,9 +223,71 @@ Examples:
 - `0 30 13 * * *` - Daily at 13:30 UTC
 - `0 0 8,14,20 * * *` - Three times daily: 8:00, 14:00, 20:00 UTC
 
+## Why Webshare Proxy?
+
+The Inovar portal uses **Cloudflare bot protection** to prevent automated scraping. This creates a challenge when deploying to Azure:
+
+### The Problem
+- ✅ **Works locally**: Your home IP address is trusted and passes Cloudflare checks
+- ❌ **Fails in Azure**: Datacenter IPs are flagged as bots and receive "Just a moment..." challenge pages
+- Result: Login requests return `403 Forbidden` with `cf-mitigated: challenge` headers
+
+### The Solution: Webshare Proxy
+[Webshare](https://www.webshare.io/) provides **residential proxy IPs** that appear as regular home connections:
+- Bypasses Cloudflare bot detection
+- Provides rotating IP addresses from real residential locations
+- The bot **auto-detects** when running in Azure and enables the proxy automatically
+- Local testing continues to work **without proxy** (faster and free)
+
+### Setup
+1. Create a free account at [webshare.io](https://www.webshare.io/)
+2. Get your API key from the dashboard
+3. Add `WEBSHARE_API_KEY` to your Azure Function App settings (see deployment section below)
+
+**Note**: The proxy is only activated when the bot detects it's running in Azure (via `WEBSITE_INSTANCE_ID` environment variable). Local development doesn't use or require the proxy.
+
 ## Deployment to Azure
 
-### Option 1: Container Deployment (Recommended)
+### Option 1: Direct Deployment (Recommended)
+
+The simplest way to deploy is using Azure Functions Core Tools:
+
+**Prerequisites:**
+- [Azure Functions Core Tools](https://docs.microsoft.com/en-us/azure/azure-functions/functions-run-local) installed
+- Logged into Azure: `az login`
+- Function App already created in Azure
+
+**Step 1:** Configure Webshare API Key (required for Cloudflare bypass)
+
+```bash
+az functionapp config appsettings set \
+  --name inovar-alert-bot \
+  --resource-group <your-resource-group> \
+  --settings WEBSHARE_API_KEY="<your-webshare-api-key>"
+```
+
+**Step 2:** Deploy the function
+
+```bash
+func azure functionapp publish inovar-alert-bot
+```
+
+**Step 3:** Wait 2-3 minutes for deployment to complete, then test
+
+```bash
+curl https://inovar-alert-bot.azurewebsites.net/api/http_trigger
+```
+
+**Benefits:**
+- ✅ One-command deployment
+- ✅ Automatic dependency installation
+- ✅ No manual ZIP creation needed
+- ✅ Works perfectly with lightweight API approach
+- ✅ Built-in build process on Azure
+
+### Option 2: Container Deployment (Advanced)
+
+For users who prefer containerized deployments:
 
 1. **Build and push Docker image**
 
@@ -224,18 +321,10 @@ az functionapp config appsettings set \
   --name <function-app-name> \
   --resource-group <resource-group> \
   --settings \
+    WEBSHARE_API_KEY="<your-webshare-api-key>" \
     ALERT_EMAIL_TO="your-email@example.com" \
     ALERT_EMAIL_TO_FALLBACK="backup@example.com"
 ```
-
-### Option 2: Direct Deployment
-
-```bash
-# Deploy directly from local files
-func azure functionapp publish <function-app-name> --build remote
-```
-
-**Note**: Direct deployment now works without containers thanks to the lightweight API approach!
 
 ## How It Works
 
@@ -325,6 +414,15 @@ If SQLite database is locked, the Azure Function app may be running multiple ins
 ## License
 
 MIT
+
+## ❤️ Acknowledgments
+
+- **Inovar +AZ** for maintaining the school management system
+- Every parent who wishes school systems were a bit more automated 😄
+
+---
+
+Feel free to fork, adapt, and improve this project!
 
 ## Support
 
