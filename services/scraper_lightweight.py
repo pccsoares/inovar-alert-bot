@@ -151,8 +151,9 @@ class InovarScraperLightweight:
             'x-festmani': self._generate_festmani_token()
         }
 
-        # Retry logic: try up to 3 times with different proxies if using proxy
-        max_attempts = 3 if self.proxy_manager else 1
+        # Retry logic: try up to 5 times with different proxies if using proxy
+        # (Sometimes multiple proxies are blocked by Cloudflare, so more attempts = higher success rate)
+        max_attempts = 5 if self.proxy_manager else 1
 
         for attempt in range(1, max_attempts + 1):
             try:
