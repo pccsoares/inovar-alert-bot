@@ -41,8 +41,16 @@ class AlertChecker:
             scrape_results = self._scrape_portal()
 
             if not scrape_results["success"]:
-                result["error"] = scrape_results.get("error", "Scraping failed")
+                error_msg = scrape_results.get("error", "Scraping failed")
+                result["error"] = error_msg
                 logger.error(f"Scraping failed: {result['error']}")
+
+                # Send failure notification
+                self._send_failure_notification(
+                    error_message=f"Falha ao obter dados do portal Inovar: {error_msg}",
+                    error_details="O bot não conseguiu aceder ao portal ou fazer login. Verifique as credenciais e o estado do proxy."
+                )
+
                 return result
 
             # Process absences
@@ -81,6 +89,13 @@ class AlertChecker:
         except Exception as e:
             logger.error(f"Error in check_alerts: {e}", exc_info=True)
             result["error"] = str(e)
+
+            # Send failure notification for unexpected errors
+            import traceback
+            self._send_failure_notification(
+                error_message=f"Erro inesperado no bot: {str(e)}",
+                error_details=traceback.format_exc()
+            )
 
         return result
 
@@ -195,3 +210,31 @@ class AlertChecker:
                 mark_event_notified(event_id, self.config.database_path)
         except Exception as e:
             logger.error(f"Error marking events as notified: {e}")
+
+    def _send_failure_notification(self, error_message: str, error_details: str = None) -> bool:
+        """Send email notification when the bot fails."""
+        try:
+            recipients = self.config.get_email_recipients()
+
+            if not recipients:
+                logger.error("No email recipients configured for failure notification")
+                return False
+
+            notifier = EmailNotifier(
+                smtp_host=self.config.smtp_host,
+                smtp_port=self.config.smtp_port,
+                smtp_user=self.config.smtp_user,
+                smtp_pass=self.config.smtp_pass,
+                smtp_from=self.config.smtp_from
+            )
+
+            return notifier.send_failure_email(
+                recipients=recipients,
+                error_message=error_message,
+                error_details=error_details
+            )
+
+        except Exception as e:
+            logger.error(f"Error sending failure notification: {e}", exc_info=True)
+            # Don't raise - we don't want a failure notification error to break everything
+            return False
