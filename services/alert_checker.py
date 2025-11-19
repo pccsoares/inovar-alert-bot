@@ -87,11 +87,17 @@ class AlertChecker:
     def _scrape_portal(self) -> Dict[str, Any]:
         """Scrape the Inovar portal using lightweight API-based approach."""
         try:
+            # Force proxy usage (auto-detection wasn't working reliably in Azure)
+            import os
+            is_azure = os.getenv('AZURE_FUNCTIONS_ENVIRONMENT') or os.getenv('WEBSITE_INSTANCE_ID')
+            logger.info(f"Environment check: is_azure={bool(is_azure)}")
+
             with InovarScraperLightweight(
                 username=self.config.inovar_username,
                 password=self.config.inovar_password,
                 login_url=self.config.inovar_login_url,
-                home_url=self.config.inovar_home_url
+                home_url=self.config.inovar_home_url,
+                use_proxy=True  # Always use proxy in Azure to bypass Cloudflare
             ) as scraper:
                 return scraper.scrape_all()
 
