@@ -60,7 +60,11 @@ class InovarScraperLightweight:
                 self.session.proxies.update(proxy_dict)
                 logger.info(f"Proxy configured: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
             except Exception as e:
-                logger.warning(f"Failed to initialize proxy: {e}. Continuing without proxy.")
+                logger.error(f"CRITICAL: Failed to initialize proxy: {e}")
+                logger.error(f"CRITICAL: Without proxy, Azure datacenter IPs will be blocked by Cloudflare!")
+                logger.error(f"Exception type: {type(e).__name__}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 self.proxy_manager = None
 
         # Set common headers to mimic real browser
@@ -269,7 +273,10 @@ class InovarScraperLightweight:
                 return False
 
         # If we get here, all attempts failed
-        logger.error("Login failed after all retry attempts")
+        logger.error(f"Login failed after {max_attempts} retry attempts")
+        logger.error(f"Proxy manager active: {self.proxy_manager is not None}")
+        if self.proxy_manager:
+            logger.error(f"Last proxy used: {self.proxy_manager.current_proxy}")
         return False
 
     def get_absences(self, week_number: int = 1) -> List[Dict[str, Any]]:

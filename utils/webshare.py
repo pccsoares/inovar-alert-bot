@@ -29,9 +29,12 @@ class Webshare:
             if self.proxies_loaded:  # Double-check after entering lock
                 return
 
-            response = requests.get(self.proxy_list_url)
-            response.raise_for_status()
-            
+            try:
+                response = requests.get(self.proxy_list_url, timeout=10)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                raise Exception(f"Failed to download proxy list from Webshare: {e}")
+
             for line in response.text.strip().split('\n'):
                 parts = line.strip().split(':')
                 if len(parts) == 4:
@@ -41,10 +44,10 @@ class Webshare:
                         'username': parts[2],
                         'password': parts[3]
                     })
-            
+
             if not self.proxies:
-                raise Exception("Failed to load proxies from Webshare.")
-            
+                raise Exception("Failed to load proxies from Webshare. No proxies in response.")
+
             print(f"\nLoaded {len(self.proxies)} proxies from Webshare.")
             self.proxies_loaded = True
     
