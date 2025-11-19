@@ -47,7 +47,13 @@ def load_config_from_file():
     try:
         with open(settings_file, 'r') as f:
             settings = json.load(f)
-            return settings.get('Values', {})
+            config = settings.get('Values', {})
+
+            # Load all config values as environment variables (Azure Functions does this automatically)
+            for key, value in config.items():
+                os.environ[key] = str(value)
+
+            return config
     except Exception as e:
         print(f"❌ ERROR: Failed to load local.settings.json: {e}")
         sys.exit(1)

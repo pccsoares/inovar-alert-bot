@@ -119,93 +119,158 @@ class InovarScraperLightweight:
     def login(self) -> bool:
         """
         Login to Inovar portal using the API.
+        Automatically retries with different proxies if proxy connection fails.
 
         Returns:
             True if login successful, False otherwise
         """
-        try:
-            # Generate session ID
-            session_id = self._generate_session_id()
+        # Prepare login data (same for all attempts)
+        session_id = self._generate_session_id()
+        username_b64 = self._encode_base64(self.username)
+        password_b64 = self._encode_base64(self.password)
+        session_id_b64 = self._encode_base64(session_id)
+        basic_auth = self._encode_base64(f"{self.username}:{self.password}")
 
-            # Encode credentials
-            username_b64 = self._encode_base64(self.username)
-            password_b64 = self._encode_base64(self.password)
-            session_id_b64 = self._encode_base64(session_id)
+        payload = {
+            "username": username_b64,
+            "password": password_b64,
+            "sessionId": session_id_b64
+        }
 
-            # Prepare Basic Auth header
-            basic_auth = self._encode_base64(f"{self.username}:{self.password}")
+        url = f"{self.BASE_URL}/api/loginFU/"
+        headers = {
+            'Authorization': f'Basic {basic_auth}',
+            'x-festmani': self._generate_festmani_token()
+        }
 
-            # Prepare login payload
-            payload = {
-                "username": username_b64,
-                "password": password_b64,
-                "sessionId": session_id_b64
-            }
+        # Retry logic: try up to 3 times with different proxies if using proxy
+        max_attempts = 3 if self.proxy_manager else 1
 
-            # Make login request
-            logger.info(f"Attempting login for user: {self.username}")
-            url = f"{self.BASE_URL}/api/loginFU/"
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if attempt > 1:
+                    logger.info(f"Login attempt {attempt}/{max_attempts}...")
+                else:
+                    logger.info(f"Attempting login for user: {self.username}")
 
-            headers = {
-                'Authorization': f'Basic {basic_auth}',
-                # x-festmani: Daily HMAC-SHA256 token (dynamically generated)
-                'x-festmani': self._generate_festmani_token()
-            }
+                response = self.session.post(url, json=payload, headers=headers, timeout=30)
 
-            response = self.session.post(url, json=payload, headers=headers, timeout=30)
+                # Check response status
+                if response.status_code != 200:
+                    logger.error(f"Login failed with status {response.status_code}")
+                    logger.error(f"Response headers: {dict(response.headers)}")
+                    logger.error(f"Response text (first 500 chars): {response.text[:500]}")
 
-            if response.status_code != 200:
-                logger.error(f"Login failed with status {response.status_code}")
-                logger.error(f"Response headers: {dict(response.headers)}")
-                logger.error(f"Response text (first 500 chars): {response.text[:500]}")
-                return False
+                    # If using proxy and not the last attempt, rotate proxy and retry
+                    if self.proxy_manager and attempt < max_attempts:
+                        logger.warning("Rotating to a different proxy...")
+                        new_proxy = self.proxy_manager.get_proxy_dict()
+                        self.session.proxies.update(new_proxy)
+                        logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                        continue
+                    return False
 
-            # Parse response
-            data = response.json()
-            logger.debug(f"Login response keys: {list(data.keys())}")
+                # Parse response
+                data = response.json()
+                logger.debug(f"Login response keys: {list(data.keys())}")
 
-            # Extract JWT token from response (try both 'TokenLogin' and 'token' fields)
-            token_login = data.get('TokenLogin') or data.get('token')
-            if token_login:
+                # Extract JWT token from response (try both 'TokenLogin' and 'token' fields)
+                token_login = data.get('TokenLogin') or data.get('token')
+                if not token_login:
+                    logger.error("No JWT token found in response!")
+                    logger.debug(f"TokenLogin value: {data.get('TokenLogin')}")
+                    logger.debug(f"token value: {data.get('token')}")
+
+                    # If using proxy and not the last attempt, rotate proxy and retry
+                    if self.proxy_manager and attempt < max_attempts:
+                        logger.warning("Rotating to a different proxy...")
+                        new_proxy = self.proxy_manager.get_proxy_dict()
+                        self.session.proxies.update(new_proxy)
+                        logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                        continue
+                    return False
+
+                # Success! Set JWT token
                 self.jwt_token = token_login
                 # Set Authorization header for all subsequent requests
                 # Note: NO SPACE between "Bearer" and the token (portal quirk)
                 self.session.headers['Authorization'] = f'Bearer{self.jwt_token}'
                 logger.info(f"JWT token extracted (first 50 chars): {str(self.jwt_token)[:50]}...")
-            else:
-                logger.error("No JWT token found in response!")
-                logger.debug(f"TokenLogin value: {data.get('TokenLogin')}")
-                logger.debug(f"token value: {data.get('token')}")
+
+                # Extract student info
+                aluno = data.get('Aluno', {})
+                self.aluno_id = aluno.get('AlunoId')
+
+                # Get current year's matricula (first in list is usually current)
+                matriculas = data.get('Matriculas', [])
+                if matriculas:
+                    current_matricula = matriculas[0]  # First one is current year
+                    self.matricula_id = current_matricula.get('MatriculaId')
+                    self.tipo_ensino = current_matricula.get('TipoEnsino', 1)
+
+                    logger.info(f"Login successful!")
+                    logger.info(f"  Student: {aluno.get('Nome')}")
+                    logger.info(f"  Aluno ID: {self.aluno_id}")
+                    logger.info(f"  Matricula ID: {self.matricula_id}")
+                    logger.info(f"  Tipo Ensino: {self.tipo_ensino}")
+                else:
+                    logger.error("No matriculas found in login response")
+
+                    # If using proxy and not the last attempt, rotate proxy and retry
+                    if self.proxy_manager and attempt < max_attempts:
+                        logger.warning("Rotating to a different proxy...")
+                        new_proxy = self.proxy_manager.get_proxy_dict()
+                        self.session.proxies.update(new_proxy)
+                        logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                        continue
+                    return False
+
+                return True
+
+            except requests.exceptions.ProxyError as e:
+                logger.error(f"Proxy error on attempt {attempt}: {e}")
+
+                # If using proxy and not the last attempt, rotate proxy and retry
+                if self.proxy_manager and attempt < max_attempts:
+                    logger.warning("Rotating to a different proxy...")
+                    new_proxy = self.proxy_manager.get_proxy_dict()
+                    self.session.proxies.update(new_proxy)
+                    logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                    continue
+
+                logger.error(f"All proxy attempts failed")
                 return False
 
-            # Extract student info
-            aluno = data.get('Aluno', {})
-            self.aluno_id = aluno.get('AlunoId')
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Network error on attempt {attempt}: {e}")
 
-            # Get current year's matricula (first in list is usually current)
-            matriculas = data.get('Matriculas', [])
-            if matriculas:
-                current_matricula = matriculas[0]  # First one is current year
-                self.matricula_id = current_matricula.get('MatriculaId')
-                self.tipo_ensino = current_matricula.get('TipoEnsino', 1)
+                # If using proxy and not the last attempt, rotate proxy and retry
+                if self.proxy_manager and attempt < max_attempts:
+                    logger.warning("Rotating to a different proxy...")
+                    new_proxy = self.proxy_manager.get_proxy_dict()
+                    self.session.proxies.update(new_proxy)
+                    logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                    continue
 
-                logger.info(f"Login successful!")
-                logger.info(f"  Student: {aluno.get('Nome')}")
-                logger.info(f"  Aluno ID: {self.aluno_id}")
-                logger.info(f"  Matricula ID: {self.matricula_id}")
-                logger.info(f"  Tipo Ensino: {self.tipo_ensino}")
-            else:
-                logger.error("No matriculas found in login response")
+                logger.error(f"All attempts failed")
                 return False
 
-            return True
+            except Exception as e:
+                logger.error(f"Unexpected error on attempt {attempt}: {e}")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Network error during login: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Error during login: {e}")
-            return False
+                # If using proxy and not the last attempt, rotate proxy and retry
+                if self.proxy_manager and attempt < max_attempts:
+                    logger.warning("Rotating to a different proxy...")
+                    new_proxy = self.proxy_manager.get_proxy_dict()
+                    self.session.proxies.update(new_proxy)
+                    logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                    continue
+
+                return False
+
+        # If we get here, all attempts failed
+        logger.error("Login failed after all retry attempts")
+        return False
 
     def get_absences(self, week_number: int = 1) -> List[Dict[str, Any]]:
         """
