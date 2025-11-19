@@ -49,7 +49,11 @@ class InovarScraperLightweight:
 
         # Auto-detect if we should use proxy (check if running in Azure)
         if use_proxy is None:
-            use_proxy = os.getenv('WEBSITE_INSTANCE_ID') is not None  # Azure Function App indicator
+            website_instance_id = os.getenv('WEBSITE_INSTANCE_ID')
+            use_proxy = website_instance_id is not None
+            logger.info(f"Auto-detect proxy: WEBSITE_INSTANCE_ID={'SET' if website_instance_id else 'NOT SET'}, use_proxy={use_proxy}")
+
+        logger.info(f"Proxy decision: use_proxy={use_proxy}, PROXY_AVAILABLE={PROXY_AVAILABLE}")
 
         # Initialize proxy if needed
         if use_proxy and PROXY_AVAILABLE:
