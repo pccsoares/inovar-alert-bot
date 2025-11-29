@@ -34,12 +34,15 @@ class Config:
 
         # Database
         # Use persistent storage in Azure Functions (/home is backed by Azure Files)
-        # Local development uses current directory
-        is_azure = os.getenv('WEBSITE_INSTANCE_ID') is not None
+        # Detect Azure by checking for FUNCTIONS_WORKER_RUNTIME or WEBSITE_INSTANCE_ID
+        is_azure = (
+            os.getenv('FUNCTIONS_WORKER_RUNTIME') is not None or
+            os.getenv('WEBSITE_INSTANCE_ID') is not None
+        )
         default_db_path = "/home/data/alerts.db" if is_azure else "alerts.db"
         self.database_path = os.getenv("DATABASE_PATH", default_db_path)
 
-        logger.info(f"Database path configured: {self.database_path}")
+        logger.info(f"Database path configured: {self.database_path} (is_azure={is_azure})")
 
         # Timezone
         self.timezone = os.getenv("TIMEZONE", "Europe/Lisbon")
