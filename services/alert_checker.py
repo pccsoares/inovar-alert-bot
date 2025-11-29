@@ -160,17 +160,39 @@ class AlertChecker:
         return new_events
 
     def _generate_event_id(self, event: Dict[str, Any], event_type: str) -> str:
-        """Generate unique event ID."""
-        # Create ID based on event type, date, and description
-        date = event.get("date", "unknown")
+        """Generate unique event ID using consistent hashing."""
+        import hashlib
+
+        # Normalize date to YYYY-MM-DD format
+        date_raw = event.get("date", "unknown")
+        date_normalized = self._normalize_date(date_raw)
+
         description = event.get("description", "")
         subject = event.get("subject", "")
 
-        # Create a unique identifier
-        id_parts = [event_type, date, description[:50], subject]
-        event_id = "_".join([str(p).replace(" ", "_") for p in id_parts if p])
+        # Create consistent string representation
+        # Use | as separator to avoid ambiguity
+        id_string = f"{event_type}|{date_normalized}|{description}|{subject}"
+
+        # Use SHA256 hash for consistent, collision-resistant IDs
+        event_id = hashlib.sha256(id_string.encode('utf-8')).hexdigest()[:32]
 
         return event_id
+
+    def _normalize_date(self, date_str: str) -> str:
+        """Normalize date string to YYYY-MM-DD format."""
+        if not date_str or date_str == "unknown":
+            return "unknown"
+
+        # Handle DD-MM-YYYY format (e.g., "19-11-2025")
+        if "-" in date_str:
+            parts = date_str.split("-")
+            if len(parts) == 3 and len(parts[0]) <= 2:
+                # DD-MM-YYYY -> YYYY-MM-DD
+                return f"{parts[2]}-{parts[1]}-{parts[0]}"
+
+        # Already in correct format or other format - return as is
+        return date_str
 
     def _send_notification(self) -> bool:
         """Send email notification."""

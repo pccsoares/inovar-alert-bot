@@ -23,22 +23,30 @@ class AlertEvent(SQLModel, table=True):
     notified: bool = Field(default=False)  # Whether email was sent for this event
 
 
-# Global engine instance
-_engine = None
+# Global engine instances (keyed by database path)
+_engines = {}
 
 
 def get_engine(database_path: str = "alerts.db"):
-    """Get or create database engine."""
-    global _engine
-    if _engine is None:
+    """Get or create database engine for the specified path."""
+    global _engines
+    if database_path not in _engines:
         database_url = f"sqlite:///{database_path}"
-        _engine = create_engine(database_url, echo=False)
+        _engines[database_path] = create_engine(database_url, echo=False)
         logger.info(f"Database engine created: {database_url}")
-    return _engine
+    return _engines[database_path]
 
 
 def init_db(database_path: str = "alerts.db"):
     """Initialize database and create tables."""
+    import os
+
+    # Ensure database directory exists (important for /home/data/ in Azure)
+    db_dir = os.path.dirname(database_path)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+        logger.info(f"Created database directory: {db_dir}")
+
     engine = get_engine(database_path)
     SQLModel.metadata.create_all(engine)
     logger.info("Database initialized successfully")
