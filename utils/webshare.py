@@ -1,73 +1,46 @@
-import requests
-import random
-import threading
 import os
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class Webshare:
-    def __init__(self, api_key=None):
-        """
-        Initialize Webshare proxy manager.
+    """Webshare rotating proxy manager.
 
-        Args:
-            api_key: Webshare API key. If not provided, reads from WEBSHARE_API_KEY env variable.
-        """
-        self.api_key = api_key or os.getenv('WEBSHARE_API_KEY')
-        if not self.api_key:
-            raise ValueError("Webshare API key required. Set WEBSHARE_API_KEY environment variable or pass api_key parameter.")
+    Uses the Webshare rotating proxy endpoint (p.webshare.io:80) which
+    automatically assigns a different IP for each request.
+    """
 
-        self.proxy_list_url = f"https://proxy.webshare.io/api/v2/proxy/list/download/{self.api_key}/-/any/username/direct/-/"
-        self.proxies = []
-        self.proxies_loaded = False
-        self.proxy_load_lock = threading.Lock()
-        self.current_proxy = None
-    
-    def ensure_proxies_loaded(self):
-        if self.proxies_loaded:
-            return
+    PROXY_HOST = "p.webshare.io"
+    PROXY_PORT = "80"
 
-        with self.proxy_load_lock:
-            if self.proxies_loaded:  # Double-check after entering lock
-                return
+    def __init__(self):
+        self.proxy_user = os.getenv('WEBSHARE_PROXY_USER')
+        self.proxy_pass = os.getenv('WEBSHARE_PROXY_PASS')
+        if not self.proxy_user or not self.proxy_pass:
+            raise ValueError(
+                "Webshare proxy credentials required. "
+                "Set WEBSHARE_PROXY_USER and WEBSHARE_PROXY_PASS environment variables."
+            )
 
-            try:
-                response = requests.get(self.proxy_list_url, timeout=10)
-                response.raise_for_status()
-            except requests.exceptions.RequestException as e:
-                raise Exception(f"Failed to download proxy list from Webshare: {e}")
+        self.current_proxy = {
+            'host': self.PROXY_HOST,
+            'port': self.PROXY_PORT,
+            'username': self.proxy_user,
+            'password': self.proxy_pass
+        }
 
-            for line in response.text.strip().split('\n'):
-                parts = line.strip().split(':')
-                if len(parts) == 4:
-                    self.proxies.append({
-                        'host': parts[0],
-                        'port': parts[1],
-                        'username': parts[2],
-                        'password': parts[3]
-                    })
+        logger.info(f"Webshare rotating proxy configured: {self.PROXY_HOST}:{self.PROXY_PORT}")
 
-            if not self.proxies:
-                raise Exception("Failed to load proxies from Webshare. No proxies in response.")
-
-            print(f"\nLoaded {len(self.proxies)} proxies from Webshare.")
-            self.proxies_loaded = True
-    
-    def get_random_proxy(self):
-        self.ensure_proxies_loaded()
-        return random.choice(self.proxies)
-    
     def get_proxy_dict(self):
-        """Returns proxy configuration in requests format"""
-        proxy = self.get_random_proxy()
-        self.current_proxy = proxy
-        
-        proxy_url = f"http://{proxy['username']}:{proxy['password']}@{proxy['host']}:{proxy['port']}"
+        """Returns proxy configuration in requests format."""
+        proxy_url = f"http://{self.proxy_user}:{self.proxy_pass}@{self.PROXY_HOST}:{self.PROXY_PORT}"
         return {
             'http': proxy_url,
             'https': proxy_url
         }
-    
+
     def switch_proxy(self):
-        """Switch to a new random proxy"""
-        self.current_proxy = self.get_random_proxy()
-        print(f"Switched to proxy: {self.current_proxy['host']}:{self.current_proxy['port']}")
+        """Switch proxy - with rotating proxy, each request already gets a new IP."""
+        logger.info("Rotating proxy: new IP will be assigned on next request")
         return self.get_proxy_dict()

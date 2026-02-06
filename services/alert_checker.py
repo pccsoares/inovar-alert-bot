@@ -4,7 +4,7 @@ import logging
 from typing import Dict, List, Any
 from datetime import datetime
 
-from models.database import AlertEvent, init_db, is_new_event, save_event, mark_event_notified
+from models.database import init_db, is_new_event, save_event_record, mark_event_notified
 from services.scraper_lightweight import InovarScraperLightweight
 from services.email_notifier import EmailNotifier
 from utils.config import get_config
@@ -34,7 +34,7 @@ class AlertChecker:
         try:
             # Initialize database
             logger.info("Initializing database...")
-            init_db(self.config.database_path)
+            init_db()
 
             # Scrape portal
             logger.info("Starting scraping process...")
@@ -137,45 +137,61 @@ class AlertChecker:
             # Generate unique event ID
             event_id = self._generate_event_id(event, event_type)
 
+            # Log event details for debugging
+            event_summary = f"{event.get('date')} - {event.get('subject', event.get('professor', 'N/A'))}"
+            if event_type == "absence":
+                event_summary += f" ({event.get('absence_type', 'N/A')})"
+
             # Check if event is new
-            if is_new_event(event_id, self.config.database_path):
+            if is_new_event(event_id):
                 # Save to database
-                alert_event = AlertEvent(
+                if save_event_record(
                     event_id=event_id,
                     event_type=event_type,
                     date=event.get("date", datetime.now().strftime("%Y-%m-%d")),
                     description=event.get("description", ""),
                     raw_data=json.dumps(event),
-                    notified=False
-                )
-
-                if save_event(alert_event, self.config.database_path):
+                ):
                     new_events.append(event)
-                    logger.info(f"New event detected: {event_id}")
+                    logger.info(f"NEW EVENT [{event_type}]: {event_summary} (ID: {event_id[:16]}...)")
                 else:
                     logger.warning(f"Failed to save event: {event_id}")
             else:
-                logger.debug(f"Event already exists: {event_id}")
+                logger.info(f"DUPLICATE SKIPPED [{event_type}]: {event_summary} (ID: {event_id[:16]}...)")
 
         return new_events
 
     def _generate_event_id(self, event: Dict[str, Any], event_type: str) -> str:
-        """Generate unique event ID using consistent hashing."""
+        """
+        Generate unique event ID using consistent hashing.
+
+        Uses only stable fields (excludes time-sensitive data like description with time).
+        For absences: event_type|date|subject|absence_type
+        For behavior alerts: event_type|date|professor|description
+        """
         import hashlib
 
         # Normalize date to YYYY-MM-DD format
         date_raw = event.get("date", "unknown")
         date_normalized = self._normalize_date(date_raw)
 
-        description = event.get("description", "")
-        subject = event.get("subject", "")
-
-        # Create consistent string representation
-        # Use | as separator to avoid ambiguity
-        id_string = f"{event_type}|{date_normalized}|{description}|{subject}"
+        # Use different fields based on event type to ensure stable hashing
+        if event_type == "absence":
+            # For absences: use subject and absence_type (NOT description which contains time)
+            subject = event.get("subject", "")
+            absence_type = event.get("absence_type", "")
+            id_string = f"{event_type}|{date_normalized}|{subject}|{absence_type}"
+        else:
+            # For behavior alerts: use professor and description
+            professor = event.get("professor", "")
+            description = event.get("description", "")
+            id_string = f"{event_type}|{date_normalized}|{professor}|{description}"
 
         # Use SHA256 hash for consistent, collision-resistant IDs
         event_id = hashlib.sha256(id_string.encode('utf-8')).hexdigest()[:32]
+
+        # Log for debugging
+        logger.debug(f"Event ID generation: '{id_string}' -> {event_id}")
 
         return event_id
 
@@ -229,7 +245,7 @@ class AlertChecker:
                     event,
                     "absence" if event in self.new_absences else "behavior_alert"
                 )
-                mark_event_notified(event_id, self.config.database_path)
+                mark_event_notified(event_id)
         except Exception as e:
             logger.error(f"Error marking events as notified: {e}")
 

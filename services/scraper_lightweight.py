@@ -91,6 +91,38 @@ class InovarScraperLightweight:
         """Close the session."""
         self.session.close()
 
+    def _is_cloudflare_block(self, response: requests.Response) -> bool:
+        """
+        Detect if response indicates Cloudflare bot protection.
+
+        Returns True if this is a Cloudflare block, False otherwise.
+        """
+        # Check for explicit Cloudflare challenge header
+        if response.headers.get('cf-mitigated') == 'challenge':
+            logger.debug("Cloudflare detected: cf-mitigated header present")
+            return True
+
+        # Check for 403/429 with Cloudflare server header
+        if response.status_code in [403, 429]:
+            server_header = response.headers.get('server', '').lower()
+            if 'cloudflare' in server_header:
+                logger.debug(f"Cloudflare detected: status {response.status_code} with CF server header")
+                return True
+
+            # Check for Cloudflare challenge page in response body
+            response_text_lower = response.text.lower()
+            cloudflare_indicators = [
+                'just a moment',
+                'checking your browser',
+                'enable javascript and cookies',
+                'cf-ray'
+            ]
+            if any(indicator in response_text_lower for indicator in cloudflare_indicators):
+                logger.debug(f"Cloudflare detected: challenge page indicators in response")
+                return True
+
+        return False
+
     def _generate_session_id(self) -> str:
         """Generate a session ID (UUID format)."""
         return str(uuid.uuid4())
@@ -169,6 +201,10 @@ class InovarScraperLightweight:
                     logger.error(f"Login failed with status {response.status_code}")
                     logger.error(f"Response headers: {dict(response.headers)}")
                     logger.error(f"Response text (first 500 chars): {response.text[:500]}")
+
+                    # Check if this is specifically a Cloudflare block
+                    if self._is_cloudflare_block(response) and self.proxy_manager:
+                        logger.warning(f"Cloudflare protection detected on proxy {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
 
                     # If using proxy and not the last attempt, rotate proxy and retry
                     if self.proxy_manager and attempt < max_attempts:

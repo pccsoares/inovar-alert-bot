@@ -4,9 +4,8 @@ azure-functions>=1.18.0
 # HTTP requests (lightweight API scraping - no browser needed!)
 requests>=2.31.0
 
-# Database
-sqlmodel>=0.0.14
-sqlalchemy>=2.0.0
+# Database (Azure Table Storage)
+azure-data-tables>=12.4.0
 
 # Email
 aiosmtplib>=3.0.0

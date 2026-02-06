@@ -1,93 +1,107 @@
-"""Database models for storing alert events."""
+"""Database using Azure Table Storage for tracking alert events."""
+import json
 import logging
+import os
 from datetime import datetime
-from typing import Optional
 
-from sqlmodel import Field, SQLModel, create_engine, Session, select
+from azure.data.tables import TableServiceClient, TableClient
 
 logger = logging.getLogger(__name__)
 
+TABLE_NAME = "alertevents"
 
-class AlertEvent(SQLModel, table=True):
-    """Model for tracking alert events (absences and behavior alerts)."""
-
-    __tablename__ = "alert_events"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    event_id: str = Field(unique=True, index=True)  # Unique identifier from API/scraping
-    event_type: str = Field(index=True)  # "absence" or "behavior_alert"
-    date: str  # Event date (YYYY-MM-DD format)
-    description: str  # Event description/details
-    raw_data: Optional[str] = None  # JSON string of raw event data
-    first_seen: datetime = Field(default_factory=datetime.utcnow)
-    notified: bool = Field(default=False)  # Whether email was sent for this event
+_table_client: TableClient = None
 
 
-# Global engine instances (keyed by database path)
-_engines = {}
+def _get_table_client() -> TableClient:
+    """Get or create the Azure Table Storage client."""
+    global _table_client
+    if _table_client is None:
+        conn_str = os.getenv("AzureWebJobsStorage")
+        if not conn_str:
+            raise ValueError("AzureWebJobsStorage connection string not set")
+
+        service = TableServiceClient.from_connection_string(conn_str)
+        service.create_table_if_not_exists(TABLE_NAME)
+        _table_client = service.get_table_client(TABLE_NAME)
+        logger.info(f"Azure Table Storage client initialized: {TABLE_NAME}")
+    return _table_client
 
 
-def get_engine(database_path: str = "alerts.db"):
-    """Get or create database engine for the specified path."""
-    global _engines
-    if database_path not in _engines:
-        database_url = f"sqlite:///{database_path}"
-        _engines[database_path] = create_engine(database_url, echo=False)
-        logger.info(f"Database engine created: {database_url}")
-    return _engines[database_path]
+def init_db(database_path: str = None):
+    """Initialize the table (create if not exists). database_path is ignored (kept for compatibility)."""
+    client = _get_table_client()
+
+    # Log existing event count for diagnostics
+    count = 0
+    for _ in client.query_entities("PartitionKey eq 'event'", select=["RowKey"], results_per_page=1000):
+        count += 1
+    logger.info(f"Database initialized (Azure Table Storage). Existing events: {count}")
 
 
-def init_db(database_path: str = "alerts.db"):
-    """Initialize database and create tables."""
-    import os
-
-    # Ensure database directory exists (important for /home/data/ in Azure)
-    db_dir = os.path.dirname(database_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-        logger.info(f"Created database directory: {db_dir}")
-
-    engine = get_engine(database_path)
-    SQLModel.metadata.create_all(engine)
-    logger.info("Database initialized successfully")
-
-
-def is_new_event(event_id: str, database_path: str = "alerts.db") -> bool:
-    """Check if an event is new (not in database)."""
-    engine = get_engine(database_path)
-    with Session(engine) as session:
-        statement = select(AlertEvent).where(AlertEvent.event_id == event_id)
-        existing = session.exec(statement).first()
-        return existing is None
-
-
-def save_event(event: AlertEvent, database_path: str = "alerts.db") -> bool:
-    """Save a new event to database. Returns True if saved, False if duplicate."""
-    engine = get_engine(database_path)
+def is_new_event(event_id: str, database_path: str = None) -> bool:
+    """Check if an event is new (not in table)."""
+    client = _get_table_client()
     try:
-        with Session(engine) as session:
-            # Check if already exists
-            if not is_new_event(event.event_id, database_path):
-                logger.info(f"Event {event.event_id} already exists, skipping")
-                return False
+        client.get_entity(partition_key="event", row_key=event_id)
+        return False
+    except Exception:
+        return True
 
-            session.add(event)
-            session.commit()
-            logger.info(f"Event {event.event_id} saved successfully")
+
+def save_event_record(
+    event_id: str,
+    event_type: str,
+    date: str,
+    description: str,
+    raw_data: str = None,
+    database_path: str = None
+) -> bool:
+    """Save a new event to Azure Table Storage. Returns True if saved, False if duplicate."""
+    client = _get_table_client()
+    try:
+        # Check if already exists
+        if not is_new_event(event_id):
+            logger.info(f"Event {event_id} already exists, skipping")
+            return False
+
+        entity = {
+            "PartitionKey": "event",
+            "RowKey": event_id,
+            "event_type": event_type,
+            "date": date,
+            "description": description,
+            "raw_data": raw_data or "",
+            "first_seen": datetime.utcnow().isoformat(),
+            "notified": False
+        }
+        client.create_entity(entity)
+
+        # Verify write
+        try:
+            client.get_entity(partition_key="event", row_key=event_id)
+            logger.info(f"Event {event_id} saved and verified")
             return True
+        except Exception:
+            logger.error(f"Event {event_id} save NOT verified!")
+            return False
+
     except Exception as e:
-        logger.error(f"Error saving event {event.event_id}: {e}")
+        # ResourceExistsError means duplicate - that's fine
+        if "EntityAlreadyExists" in str(e) or "conflict" in str(e).lower():
+            logger.info(f"Event {event_id} already exists (conflict), skipping")
+            return False
+        logger.error(f"Error saving event {event_id}: {e}")
         return False
 
 
-def mark_event_notified(event_id: str, database_path: str = "alerts.db"):
+def mark_event_notified(event_id: str, database_path: str = None):
     """Mark an event as notified."""
-    engine = get_engine(database_path)
-    with Session(engine) as session:
-        statement = select(AlertEvent).where(AlertEvent.event_id == event_id)
-        event = session.exec(statement).first()
-        if event:
-            event.notified = True
-            session.add(event)
-            session.commit()
-            logger.info(f"Event {event_id} marked as notified")
+    client = _get_table_client()
+    try:
+        entity = client.get_entity(partition_key="event", row_key=event_id)
+        entity["notified"] = True
+        client.update_entity(entity)
+        logger.info(f"Event {event_id} marked as notified")
+    except Exception as e:
+        logger.error(f"Error marking event {event_id} as notified: {e}")
