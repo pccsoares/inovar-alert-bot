@@ -187,6 +187,20 @@ class InovarScraperLightweight:
         # (Sometimes multiple proxies are blocked by Cloudflare, so more attempts = higher success rate)
         max_attempts = 10 if self.proxy_manager else 1
 
+        def _rotate_connection():
+            """Close pooled connections so the next request gets a fresh residential IP.
+
+            Webshare's rotating endpoint assigns a new IP per TCP connection,
+            so without this the session keeps reusing the same (possibly blocked) IP.
+            """
+            try:
+                self.session.close()
+            except Exception:
+                pass
+            # Re-apply proxy settings on the (now clean) session adapter pool.
+            if self.proxy_manager:
+                self.session.proxies.update(self.proxy_manager.get_proxy_dict())
+
         for attempt in range(1, max_attempts + 1):
             try:
                 if attempt > 1:
@@ -208,10 +222,8 @@ class InovarScraperLightweight:
 
                     # If using proxy and not the last attempt, rotate proxy and retry
                     if self.proxy_manager and attempt < max_attempts:
-                        logger.warning("Rotating to a different proxy...")
-                        new_proxy = self.proxy_manager.get_proxy_dict()
-                        self.session.proxies.update(new_proxy)
-                        logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                        logger.warning("Rotating residential IP (closing connection pool)...")
+                        _rotate_connection()
                         continue
                     return False
 
@@ -228,10 +240,8 @@ class InovarScraperLightweight:
 
                     # If using proxy and not the last attempt, rotate proxy and retry
                     if self.proxy_manager and attempt < max_attempts:
-                        logger.warning("Rotating to a different proxy...")
-                        new_proxy = self.proxy_manager.get_proxy_dict()
-                        self.session.proxies.update(new_proxy)
-                        logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                        logger.warning("Rotating residential IP (closing connection pool)...")
+                        _rotate_connection()
                         continue
                     return False
 
@@ -263,10 +273,8 @@ class InovarScraperLightweight:
 
                     # If using proxy and not the last attempt, rotate proxy and retry
                     if self.proxy_manager and attempt < max_attempts:
-                        logger.warning("Rotating to a different proxy...")
-                        new_proxy = self.proxy_manager.get_proxy_dict()
-                        self.session.proxies.update(new_proxy)
-                        logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                        logger.warning("Rotating residential IP (closing connection pool)...")
+                        _rotate_connection()
                         continue
                     return False
 
@@ -277,10 +285,8 @@ class InovarScraperLightweight:
 
                 # If using proxy and not the last attempt, rotate proxy and retry
                 if self.proxy_manager and attempt < max_attempts:
-                    logger.warning("Rotating to a different proxy...")
-                    new_proxy = self.proxy_manager.get_proxy_dict()
-                    self.session.proxies.update(new_proxy)
-                    logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                    logger.warning("Rotating residential IP (closing connection pool)...")
+                    _rotate_connection()
                     continue
 
                 logger.error(f"All proxy attempts failed")
@@ -291,10 +297,8 @@ class InovarScraperLightweight:
 
                 # If using proxy and not the last attempt, rotate proxy and retry
                 if self.proxy_manager and attempt < max_attempts:
-                    logger.warning("Rotating to a different proxy...")
-                    new_proxy = self.proxy_manager.get_proxy_dict()
-                    self.session.proxies.update(new_proxy)
-                    logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                    logger.warning("Rotating residential IP (closing connection pool)...")
+                    _rotate_connection()
                     continue
 
                 logger.error(f"All attempts failed")
@@ -305,10 +309,8 @@ class InovarScraperLightweight:
 
                 # If using proxy and not the last attempt, rotate proxy and retry
                 if self.proxy_manager and attempt < max_attempts:
-                    logger.warning("Rotating to a different proxy...")
-                    new_proxy = self.proxy_manager.get_proxy_dict()
-                    self.session.proxies.update(new_proxy)
-                    logger.info(f"Switched to proxy: {self.proxy_manager.current_proxy['host']}:{self.proxy_manager.current_proxy['port']}")
+                    logger.warning("Rotating residential IP (closing connection pool)...")
+                    _rotate_connection()
                     continue
 
                 return False
